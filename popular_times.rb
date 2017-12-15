@@ -20,7 +20,11 @@ class PopularTimes
     response = JSON.parse(Net::HTTP.get(uri))
     check_response_code(response)
     details = response['result']
-    search_term = "%{name} %{formatted_address}" % {name: details['name'], formatted_address: details['formatted_address']}
+    search_term = "%{name} %{formatted_address}" %
+        {
+            name: details['name'],
+            formatted_address: details['formatted_address']
+        }
     popularity, rating, rating_n, current_popularity = get_current_popularity(search_term)
     details_json = {
         id: details["place_id"],
@@ -51,6 +55,7 @@ class PopularTimes
     else
       details_json["popular_times"] = []
     end
+
     JSON.unparse(details_json)
   end
 
@@ -90,10 +95,12 @@ class PopularTimes
       $logger.error("Your request was denied, the API key is invalid.")
     end
     if resp["status"] == "OVER_QUERY_LIMIT"
-      $logger.error("You exceeded your Query Limit for Google Places API Web Service, check https://developers.google.com/places/web-service/usage to upgrade your quota.")
+      $logger.error("You exceeded your Query Limit for Google Places API Web Service, " +
+                        "check https://developers.google.com/places/web-service/usage to upgrade your quota.")
     end
     if resp["status"] == "INVALID_REQUEST"
-      $logger.error("The query string is malformed, check params.json if your formatting for lat/lng and radius is correct.")
+      $logger.error("The query string is malformed, " +
+                        "check params.json if your formatting for lat/lng and radius is correct.")
     end
     # TODO: preguntar si esto está gud
     # $logger.error("Exiting application ...")
@@ -137,4 +144,63 @@ class PopularTimes
       return popular_times, rating, rating_n, current_popularity
     end
   end
+
+  def get_nearby_places(lat, lng, radius)
+    radius_search = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
+    params_url = {
+        location: "%{lat},%{lng}" % {lat: lat, lng: lng},
+        radius: radius,
+        type: "restaurant",
+        key: $api_key
+    }
+    nearby_search = radius_search + URI.encode_www_form(params_url)
+    uri = URI(nearby_search)
+    response = JSON.load(Net::HTTP.get(uri))
+    check_response_code(response)
+    data_list = response["results"]
+
+    if response["next_page_token"] != nil
+      params_url = {
+          pagetoken: response["next_page_token"],
+          key: $api_key
+      }
+      nearby_search = radius_search + URI.encode_www_form(params_url)
+      uri = URI(nearby_search)
+      sleep(2)
+      response = JSON.load(Net::HTTP.get(uri))
+      results = response["results"]
+      for result in results
+        data_list.push(result)
+      end
+    end
+
+    result_list = []
+    for data in data_list
+      search_term = "%{name} %{formatted_address}" %
+          {
+              name: data['name'],
+              formatted_address: data['vicinity']
+          }
+      popularity, rating, rating_n, current_popularity = get_current_popularity(search_term)
+
+      nearby_json = {
+          name: data['name'],
+          address: data['vicinity'],
+          coordinates: data["geometry"]["location"]
+      }
+
+      if current_popularity != nil
+        nearby_json["current_popularity"] = current_popularity
+      end
+
+      if popularity != nil
+        nearby_json["popular_times"] = get_popularity_for_day(popularity)
+      else
+        nearby_json["popular_times"] = []
+      end
+      result_list << nearby_json
+    end
+    JSON.unparse result_list
+  end
+
 end
