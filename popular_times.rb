@@ -5,6 +5,7 @@ require 'logger'
 class PopularTimes
   $logger = Logger.new(STDOUT)
   $api_key = nil
+  $radius_search = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
 
   def initialize (api_key)
     $api_key = api_key
@@ -145,62 +146,99 @@ class PopularTimes
     end
   end
 
+  def get_nearby_search(parameters)
+    nearby_search = $radius_search + URI.encode_www_form(parameters)
+    uri = URI(nearby_search)
+    response = JSON.load(Net::HTTP.get(uri))
+    check_response_code(response)
+    response
+  end
+
+  def filter_popular_times(data)
+    search_term = "%{name} %{formatted_address}" %
+        {
+            name: data['name'],
+            formatted_address: data['vicinity']
+        }
+    popularity, rating, rating_n, current_popularity = get_current_popularity(search_term)
+
+    nearby_json = {
+        name: data['name'],
+        address: data['vicinity'],
+        coordinates: data["geometry"]["location"],
+        id: data["place_id"]
+    }
+
+    if current_popularity != nil
+      nearby_json["current_popularity"] = current_popularity
+    end
+
+    if popularity != nil
+      nearby_json["popular_times"] = get_popularity_for_day(popularity)
+    else
+      nearby_json["popular_times"] = []
+    end
+    nearby_json
+  end
+
   def get_nearby_places(lat, lng, radius)
-    radius_search = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
+    nearby_json = []
+    results_limit = 40
     params_url = {
         location: "%{lat},%{lng}" % {lat: lat, lng: lng},
         radius: radius,
         type: "restaurant",
         key: $api_key
     }
-    nearby_search = radius_search + URI.encode_www_form(params_url)
-    uri = URI(nearby_search)
-    response = JSON.load(Net::HTTP.get(uri))
-    check_response_code(response)
+    response = get_nearby_search(params_url)
     data_list = response["results"]
-
-    if response["next_page_token"] != nil
-      params_url = {
-          pagetoken: response["next_page_token"],
-          key: $api_key
-      }
-      nearby_search = radius_search + URI.encode_www_form(params_url)
-      uri = URI(nearby_search)
-      sleep(2)
-      response = JSON.load(Net::HTTP.get(uri))
-      results = response["results"]
-      for result in results
-        data_list.push(result)
+    while nearby_json.length < results_limit
+      data_list.each do |data|
+        if nearby_json.length < results_limit
+          temp_result = filter_popular_times(data)
+          if temp_result["popular_times"].length != 0
+            duplicated_entry = false
+            if nearby_json.length == 0
+              nearby_json << temp_result
+            end
+            nearby_json.each do |restaurant|
+              if restaurant.has_value?(temp_result[:id])
+                duplicated_entry = true
+                break
+              end
+            end
+            if duplicated_entry === false
+              nearby_json << temp_result
+            end
+          end
+        else
+          break
+        end
       end
-    end
-
-    result_list = []
-    for data in data_list
-      search_term = "%{name} %{formatted_address}" %
-          {
-              name: data['name'],
-              formatted_address: data['vicinity']
+      if nearby_json.length < results_limit
+        if response["next_page_token"] != nil
+          params_url = {
+              pagetoken: response["next_page_token"],
+              key: $api_key
           }
-      popularity, rating, rating_n, current_popularity = get_current_popularity(search_term)
-
-      nearby_json = {
-          name: data['name'],
-          address: data['vicinity'],
-          coordinates: data["geometry"]["location"]
-      }
-
-      if current_popularity != nil
-        nearby_json["current_popularity"] = current_popularity
+          response = get_nearby_search(params_url)
+          data_list = response["results"]
+        else
+          if params_url["type"] != "bar"
+            params_url = {
+                location: "%{lat},%{lng}" % {lat: lat, lng: lng},
+                radius: radius,
+                type: "bar",
+                key: $api_key
+            }
+            response = get_nearby_search(params_url)
+            data_list = response["results"]
+          else
+            break
+          end
+        end
       end
-
-      if popularity != nil
-        nearby_json["popular_times"] = get_popularity_for_day(popularity)
-      else
-        nearby_json["popular_times"] = []
-      end
-      result_list << nearby_json
     end
-    JSON.unparse result_list
+    JSON.unparse nearby_json
   end
-
 end
