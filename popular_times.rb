@@ -183,6 +183,7 @@ class PopularTimes
 
   def get_nearby_places(lat, lng, radius)
     nearby_json = []
+    threads = []
     results_limit = 40
     params_url = {
         location: "%{lat},%{lng}" % {lat: lat, lng: lng},
@@ -194,37 +195,45 @@ class PopularTimes
     data_list = response["results"]
     while nearby_json.length < results_limit
       data_list.each do |data|
-        if nearby_json.length < results_limit
-          temp_result = filter_popular_times(data)
-          if temp_result["popular_times"].length != 0
-            duplicated_entry = false
-            if nearby_json.length == 0
-              nearby_json << temp_result
-            end
-            nearby_json.each do |restaurant|
-              if restaurant.has_value?(temp_result[:id])
-                duplicated_entry = true
-                break
+        threads << Thread.new {
+          if nearby_json.length < results_limit
+            temp_result = filter_popular_times(data)
+            if temp_result["popular_times"].length != 0
+              duplicated_entry = false
+              if nearby_json.length == 0
+                nearby_json << temp_result
+              end
+              nearby_json.each do |restaurant|
+                if restaurant.has_value?(temp_result[:id])
+                  duplicated_entry = true
+                  break
+                end
+              end
+              if duplicated_entry === false
+                nearby_json << temp_result
               end
             end
-            if duplicated_entry === false
-              nearby_json << temp_result
-            end
+          else
+            break
           end
-        else
-          break
-        end
+        }
       end
+      threads.each do |th|
+        th.join
+      end
+      p "nearbyjson = " + nearby_json.length.to_s
+      threads = []
+      sleep (0.8)
       if nearby_json.length < results_limit
         if response["next_page_token"] != nil
-          params_url = {
+          page_params_url = {
               pagetoken: response["next_page_token"],
               key: $api_key
           }
-          response = get_nearby_search(params_url)
+          response = get_nearby_search(page_params_url)
           data_list = response["results"]
         else
-          if params_url["type"] != "bar"
+          if params_url[:type] != "bar"
             params_url = {
                 location: "%{lat},%{lng}" % {lat: lat, lng: lng},
                 radius: radius,
@@ -239,6 +248,6 @@ class PopularTimes
         end
       end
     end
-    JSON.unparse nearby_json
+    puts JSON.unparse nearby_json
   end
 end
