@@ -173,6 +173,14 @@ class PopularTimes
       nearby_json["current_popularity"] = current_popularity
     end
 
+    if rating != nil
+      nearby_json["rating"] = rating
+    end
+
+    if rating_n != nil
+      nearby_json["rating_n"] = rating_n
+    end
+
     if popularity != nil
       nearby_json["popular_times"] = get_popularity_for_day(popularity)
     else
@@ -221,7 +229,6 @@ class PopularTimes
       threads.each do |th|
         th.join
       end
-      p "nearbyjson = " + nearby_json.length.to_s
       threads = []
       sleep (0.8)
       if nearby_json.length < results_limit
@@ -248,6 +255,6 @@ class PopularTimes
         end
       end
     end
-    puts JSON.unparse nearby_json
+    JSON.unparse nearby_json
   end
 end
