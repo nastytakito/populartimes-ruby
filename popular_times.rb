@@ -3,23 +3,38 @@ require 'json'
 require 'net/http'
 require 'logger'
 class PopularTimes
-  $logger = Logger.new(STDOUT)
-  $api_key = nil
-  $radius_search = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
+  @logger = Logger.new(STDOUT)
+  @api_key = nil
+  @radius_search = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
 
-  def initialize (api_key)
-    $api_key = api_key
+  def initialize api_key
+    @api_key = api_key
+  end
+
+  def popular_hours(place_id)
+    info = get_details(place_id)
+    return if info.nil? || info[:popular_times].empty?
+    info = info[:popular_times]
+    [
+        { day: 1, data: info[0][:data][6..-1].push(info[1][:data][0]).push(info[1][:data][1]) },
+        { day: 2, data: info[1][:data][6..-1].push(info[2][:data][0]).push(info[2][:data][1]) },
+        { day: 3, data: info[2][:data][6..-1].push(info[3][:data][0]).push(info[3][:data][1]) },
+        { day: 4, data: info[3][:data][6..-1].push(info[4][:data][0]).push(info[4][:data][1]) },
+        { day: 5, data: info[4][:data][6..-1].push(info[5][:data][0]).push(info[5][:data][1]) },
+        { day: 6, data: info[5][:data][6..-1].push(info[6][:data][0]).push(info[6][:data][1]) },
+        { day: 7, data: info[6][:data][6..-1].push(info[0][:data][0]).push(info[0][:data][1]) }
+    ]
   end
 
   def get_details(place_id)
     detail_url = 'https://maps.googleapis.com/maps/api/place/details/json?placeid=%{place_id}&key=%{api_key}' %
         {
             place_id: place_id,
-            api_key: $api_key
+            api_key: @api_key
         }
     uri = URI(detail_url)
     response = JSON.parse(Net::HTTP.get(uri))
-    check_response_code(response)
+    return nil unless check_response_code(response)
     details = response['result']
     search_term = "%{name} %{formatted_address}" %
         {
@@ -52,32 +67,42 @@ class PopularTimes
     end
 
     if popularity != nil
-      details_json["popular_times"] = get_popularity_for_day(popularity)
+      details_json[:popular_times] = get_popularity_for_day(popularity)
     else
-      details_json["popular_times"] = []
+      details_json[:popular_times] = []
     end
 
     JSON.unparse(details_json)
+    # details_json
   end
 
   def get_popularity_for_day(popularity)
     popular_times_json, days_json = [], Array.new(7) {Array.new(24) {0}}
+    days_status = Array.new(7)
     day_name = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     if popularity != ""
       for day in popularity
-        day_no, pop_time = day[0..2]
-        if pop_time != nil
-          for el in pop_time
-            hour, pop = el[0..2]
-            days_json[day_no - 1][hour] = pop
-            if hour == 23
-              day_no = day_no % 7 + 1
+        day_no, pop_time, closed = day[0..3]
+        if closed == 0
+          if pop_time != nil
+            days_status[day_no - 1] = 'OK'
+            for el in pop_time
+              hour, pop = el[0..2]
+              days_json[day_no - 1][hour] = pop
+              if hour == 23
+                day_no = day_no % 7 + 1
+              end
+              # puts "#{day_no} #{hour} - #{pop}"
             end
+          else
+            days_status[day_no - 1] ='NO_DATA'
           end
+        else
+          days_status[day_no - 1] ='CLOSED'
         end
       end
       for d in (0..6)
-        popular_times_json.push({:name => day_name[d], :data => days_json[d]})
+        popular_times_json.push({:name => day_name[d], :data => days_json[d], :status => days_status[d]})
       end
       popular_times_json
     end
@@ -89,22 +114,25 @@ class PopularTimes
     # :param resp: json response
     # :return:
 
+    # puts "status #{resp["status"]}"
     if resp["status"] == "OK" or resp["status"] == "ZERO_RESULTS"
-      return
+      true
+    elsif resp["status"] == "INVALID_REQUEST"
+      false
+    else
+      false
     end
-    if resp["status"] == "REQUEST_DENIED"
-      $logger.error("Your request was denied, the API key is invalid.")
-    end
-    if resp["status"] == "OVER_QUERY_LIMIT"
-      $logger.error("You exceeded your Query Limit for Google Places API Web Service, " +
-                        "check https://developers.google.com/places/web-service/usage to upgrade your quota.")
-    end
-    if resp["status"] == "INVALID_REQUEST"
-      $logger.error("The query string is malformed, " +
-                        "check params.json if your formatting for lat/lng and radius is correct.")
-    end
-    # TODO: preguntar si esto está gud
-    # $logger.error("Exiting application ...")
+    # if resp["status"] == "REQUEST_DENIED"
+    #   puts "Your request was denied, the API key is invalid."
+    # end
+    # if resp["status"] == "OVER_QUERY_LIMIT"
+    #   puts "You exceeded your Query Limit for Google Places API Web Service, " +
+    #                     "check https://developers.google.com/places/web-service/usage to upgrade your quota."
+    # end
+    # if resp["status"] == "INVALID_REQUEST"
+    #   puts "The query string is malformed, " + "check params.json if your formatting for lat/lng and radius is correct."
+    # end
+    # @logger.error("Exiting application ...")
     # exit(1)
   end
 
@@ -147,7 +175,7 @@ class PopularTimes
   end
 
   def get_nearby_search(parameters)
-    nearby_search = $radius_search + URI.encode_www_form(parameters)
+    nearby_search = @radius_search + URI.encode_www_form(parameters)
     uri = URI(nearby_search)
     response = JSON.load(Net::HTTP.get(uri))
     check_response_code(response)
@@ -197,7 +225,7 @@ class PopularTimes
         location: "%{lat},%{lng}" % {lat: lat, lng: lng},
         radius: radius,
         type: "restaurant",
-        key: $api_key
+        key: @api_key
     }
     response = get_nearby_search(params_url)
     data_list = response["results"]
@@ -235,7 +263,7 @@ class PopularTimes
         if response["next_page_token"] != nil
           page_params_url = {
               pagetoken: response["next_page_token"],
-              key: $api_key
+              key: @api_key
           }
           response = get_nearby_search(page_params_url)
           data_list = response["results"]
@@ -245,7 +273,7 @@ class PopularTimes
                 location: "%{lat},%{lng}" % {lat: lat, lng: lng},
                 radius: radius,
                 type: "bar",
-                key: $api_key
+                key: @api_key
             }
             response = get_nearby_search(params_url)
             data_list = response["results"]
