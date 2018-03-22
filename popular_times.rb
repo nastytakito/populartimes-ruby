@@ -1,5 +1,5 @@
 require 'json'
-require 'certified' #quitar después
+# require 'certified' #quitar después
 require 'net/http'
 require 'logger'
 class PopularTimes
